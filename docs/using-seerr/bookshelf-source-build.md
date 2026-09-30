@@ -1,6 +1,6 @@
 ---
 title: Build BookshelfNG from Source
-description: Build and run the BookshelfNG Readarr-compatible backend without Docker.
+description: Build and run BookshelfNG with its web interface without Docker.
 sidebar_position: 23
 ---
 
@@ -27,12 +27,14 @@ upgrade path.
 ## What this builds
 
 The BookshelfNG repository contains a .NET backend and a React/Webpack
-frontend. Its build script publishes the backend and places the compiled UI in
-the same output tree:
+frontend. A backend-only publish and the frontend output are separate; the
+`--packages` option assembles both into the directory you install:
 
 ```text
-_output/net6.0/linux-x64/publish/Readarr
-_output/UI/
+_output/net10.0/linux-x64/publish/Readarr
+_output/UI/index.html
+_artifacts/linux-x64/net10.0/Readarr/Readarr
+_artifacts/linux-x64/net10.0/Readarr/UI/index.html
 ```
 
 The executable keeps the inherited `Readarr` name. That is expected for the
@@ -43,20 +45,21 @@ BookshelfNG fork and does not mean that the wrong project was built.
 Install these tools on the host that will run BookshelfNG:
 
 - Git
-- .NET SDK 6.0.x, not only the .NET runtime
+- .NET SDK 10.0.401, not only the .NET runtime
 - Node.js 20.x
 - Yarn Classic 1.22.x
 - Bash, `curl`, and a C/C++ build toolchain for any native Node dependencies
 
-The current repository pins .NET `6.0.428` and Node `20.19.4` in `mise.toml`,
-and its package metadata pins Yarn `1.22.19`. If you use [mise](https://mise.jdx.dev/),
-run `mise install` from the BookshelfNG checkout. Otherwise install equivalent
-versions through your operating system or the upstream tool installers.
+The current repository pins .NET `10.0.401` and Node `20.19.4` in `mise.toml`,
+and its build instructions use Yarn Classic `1.22.19`. If you use
+[mise](https://mise.jdx.dev/), run `mise install` from the BookshelfNG
+checkout. Otherwise install equivalent versions through your operating system
+or the upstream tool installers.
 
 Check the active versions before starting:
 
 ```bash
-dotnet --list-sdks | grep '^6\.'
+dotnet --list-sdks | grep '^10\.'
 node --version
 yarn --version
 ```
@@ -91,17 +94,17 @@ SeerrNG's `config` directory. Keep the source and runtime data separate.
 
 ## Build a Linux x64 binary
 
-For a normal Linux x64 host, build only the runtime you need:
+For a normal Linux x64 host, build and package the backend and UI together:
 
 ```bash
-./build.sh --backend --frontend -r linux-x64 -f net6.0
+./build.sh --backend --frontend --packages -r linux-x64 -f net10.0
 ```
 
 If NuGet reports an advisory while restoring, pass an explicit MSBuild warning
 policy through the wrapper. Keep the warning visible while investigating it:
 
 ```bash
-./build.sh --backend --frontend -r linux-x64 -f net6.0 \
+./build.sh --backend --frontend --packages -r linux-x64 -f net10.0 \
   --msbuild-arg "-p:WarningsNotAsErrors=NU1903"
 ```
 
@@ -109,25 +112,35 @@ Replace `NU1903` with the warning code from the restore output. `build.sh`
 rejects unknown options, so flags such as `--no-warn` are not silently ignored.
 Do not suppress an advisory instead of updating a vulnerable package.
 
-The command restores .NET and Yarn dependencies, publishes the backend, and
-builds the frontend. Validate the expected output before installing it:
+The command restores .NET and Yarn dependencies, publishes the backend,
+builds the frontend, and combines both into a standalone app directory.
+Validate both the build output and the installable package:
 
 ```bash
-test -x _output/net6.0/linux-x64/publish/Readarr
-test -d _output/UI
+test -x _output/net10.0/linux-x64/publish/Readarr
+test -s _output/UI/index.html
+test -x _artifacts/linux-x64/net10.0/Readarr/Readarr
+test -s _artifacts/linux-x64/net10.0/Readarr/UI/index.html
 ```
 
-To build every runtime configured by the repository instead, omit `-r` and
-`-f`:
+Install from `_artifacts/linux-x64/net10.0/Readarr/`. Do not install by
+copying only `_output/net10.0/linux-x64/publish/`; that directory contains the
+backend but not the separately built web interface. Older guides may say
+`net6.0`; this source tree targets `net10.0`.
+
+To build every configured runtime for a Docker build or development checkout,
+omit `-r` and `-f`:
 
 ```bash
 ./build.sh --backend --frontend
 ```
 
-Use the runtime identifier that matches the host. The repository currently
-configures `linux-x64`, `linux-musl-x64`, and `linux-musl-arm64`; a musl build
-is generally intended for an Alpine-style environment. Do not copy a musl
-binary onto a glibc host unless you have verified that host's compatibility.
+This produces backend outputs for `linux-x64`, `linux-musl-x64`, and
+`linux-musl-arm64`, plus `_output/UI`; it does not create the standalone app
+directory. Use the Linux x64 package command above when installing directly on
+a standard glibc host. A musl build is generally intended for an Alpine-style
+environment. Do not copy a musl binary onto a glibc host unless you have
+verified that host's compatibility.
 
 ## Run it in the foreground first
 
@@ -138,7 +151,7 @@ of the source checkout:
 ```bash
 mkdir -p "$HOME/.config/bookshelfng"
 
-./_output/net6.0/linux-x64/publish/Readarr \
+./_artifacts/linux-x64/net10.0/Readarr/Readarr \
   -data="$HOME/.config/bookshelfng" \
   -nobrowser
 ```
@@ -189,7 +202,7 @@ id bookshelfng >/dev/null 2>&1 || \
 sudo install -d -m 0755 /opt/bookshelfng
 sudo install -d -o bookshelfng -g bookshelfng -m 0750 /var/lib/bookshelfng
 sudo install -d -o root -g bookshelfng -m 0750 /etc/bookshelfng
-sudo cp -a _output/net6.0/linux-x64/publish/. /opt/bookshelfng/
+sudo cp -a _artifacts/linux-x64/net10.0/Readarr/. /opt/bookshelfng/
 sudo chown -R root:root /opt/bookshelfng
 ```
 
@@ -296,9 +309,9 @@ cd ~/src/bookshelfng
 git fetch origin
 git checkout main
 git pull --ff-only
-./build.sh --backend --frontend -r linux-x64 -f net6.0
+./build.sh --backend --frontend --packages -r linux-x64 -f net10.0
 
-sudo cp -a _output/net6.0/linux-x64/publish/. /opt/bookshelfng/
+sudo cp -a _artifacts/linux-x64/net10.0/Readarr/. /opt/bookshelfng/
 sudo systemctl start bookshelfng
 sudo journalctl -u bookshelfng -n 100 --no-pager
 ```
@@ -312,8 +325,8 @@ treating this as a normal binary upgrade.
 
 ### `dotnet` cannot find a compatible SDK
 
-Install the .NET 6 SDK. A newer runtime or SDK alone does not guarantee that
-the `net6.0` solution can restore and publish correctly.
+Install the .NET 10 SDK. A runtime alone is not sufficient to restore and
+publish this source tree.
 
 ### NuGet reports a vulnerable package
 
@@ -326,14 +339,16 @@ you have deliberately accepted that audit policy.
 
 ### The UI is missing
 
-The frontend must be built as part of the same checkout. Run:
+Build and install the combined standalone package from the same checkout:
 
 ```bash
-yarn install --frozen-lockfile --network-timeout 120000
-yarn run build --env production
+./build.sh --backend --frontend --packages --runtime linux-x64 --framework net10.0
+test -s _artifacts/linux-x64/net10.0/Readarr/UI/index.html
+sudo cp -a _artifacts/linux-x64/net10.0/Readarr/. /opt/bookshelfng/
 ```
 
-Then confirm that `_output/UI` exists and rebuild the backend if necessary.
+The installed web interface is at `/opt/bookshelfng/UI`. Building only the
+backend, or copying only its `_output/.../publish` directory, omits that UI.
 
 ### The service exits immediately
 
