@@ -3,6 +3,7 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import SelectionCircle from '@app/components/Common/SelectionCircle';
 import Tooltip from '@app/components/Common/Tooltip';
+import { useSetupConnectionSuggestion } from '@app/context/SetupConnectionsContext';
 import defineMessages from '@app/utils/defineMessages';
 import { QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import type { EmulationSystemGroup } from '@server/lib/settings';
@@ -127,6 +128,8 @@ const getProviderPayload = (provider: ProviderSettings) => ({
 
 const SettingsSoftwareAcquisition = () => {
   const intl = useIntl();
+  const romarrSuggestion = useSetupConnectionSuggestion('romarrng');
+  const questarrSuggestion = useSetupConnectionSuggestion('questarrng');
   const { data, error, isLoading } = useSWR<SoftwareSettingsResponse>(
     '/api/v1/settings/software-acquisition'
   );
@@ -155,11 +158,31 @@ const SettingsSoftwareAcquisition = () => {
 
   useEffect(() => {
     if (!data) return;
-    setRomarr(toProviderState(data.romarr));
-    setQuestarr(toProviderState(data.questarr));
+    setRomarr((current) => {
+      const next = current ?? toProviderState(data.romarr);
+      if (data.romarr.hostname || next.hostname || !romarrSuggestion) {
+        return next;
+      }
+      return {
+        ...next,
+        hostname: romarrSuggestion.hostname,
+        port: romarrSuggestion.port,
+      };
+    });
+    setQuestarr((current) => {
+      const next = current ?? toProviderState(data.questarr);
+      if (data.questarr.hostname || next.hostname || !questarrSuggestion) {
+        return next;
+      }
+      return {
+        ...next,
+        hostname: questarrSuggestion.hostname,
+        port: questarrSuggestion.port,
+      };
+    });
     setEmulationCatalogProvider(data.emulationCatalogProvider ?? 'questarr');
     setSystemGroups(data.emulationSystemGroups ?? {});
-  }, [data]);
+  }, [data, romarrSuggestion, questarrSuggestion]);
 
   const updateProvider = (
     provider: 'romarr' | 'questarr',
