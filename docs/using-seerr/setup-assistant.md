@@ -1,16 +1,15 @@
 ---
 title: Cross-platform setup assistant
-description: Create a starter Docker Compose stack and connect its apps to SeerrNG.
+description: Set up Docker apps or connect native and remote services to SeerrNG.
 sidebar_position: 5
 ---
 
 # Cross-platform setup assistant
 
-The setup assistant creates a Docker Compose stack and a per-stack guide for
-the media services you choose. It runs on Windows, macOS, and Linux with Node.js
-24.15.0 or newer in the 24.x line and Docker Compose v2. Docker Desktop is
-suitable on Windows and macOS; Docker Engine with the Compose plugin is
-suitable on Linux. The assistant does not install or configure Docker itself.
+The setup assistant runs on Windows, macOS, and Linux with Node.js 24.15.0 or
+newer in the 24.x line. Docker is only required for Compose stack generation
+and Docker network discovery. The assistant does not install or configure
+Docker, native applications, or operating-system services.
 
 ## Run the assistant
 
@@ -39,9 +38,8 @@ node scripts/setup-assistant.mjs
 
 Choose a starter profile, confirm the output directory, and optionally let the
 assistant start the stack after it writes the files. It writes files only; it
-does not install apps, configure API keys, or start containers unless you
-explicitly choose that option. To select a profile and output location
-directly:
+does not install apps or configure API keys. To select a profile and output
+location directly:
 
 ```text
 node scripts/setup-assistant.mjs --profile movies-tv --output ./my-media-stack
@@ -63,6 +61,48 @@ attach your existing SeerrNG container to it. The assistant does not scan
 Docker networks or containers to guess which SeerrNG instance you mean. This
 mode requires SeerrNG to run in a Docker container on the same Docker host;
 native or remote SeerrNG installs need a separately reachable app address.
+
+## Connect native or remote apps
+
+Use manual connection mode when SeerrNG or its companion apps are installed
+from native archives, Linux packages, package managers, Unraid templates, or
+other non-Compose methods. It does not call Docker or inspect operating-system
+processes. It creates the same import file from an explicit hostname and the
+selected apps’ common default ports; you can override ports interactively.
+
+```text
+node scripts/setup-assistant.mjs --connections
+```
+
+Select app IDs from the menu, enter a hostname or IPv4 address that SeerrNG can
+reach, and confirm each port. The assistant writes
+`seerrng-connections.json` and `CONNECTIONS.md` into
+`./seerrng-connections`. Enter values non-interactively with:
+
+```text
+node scripts/setup-assistant.mjs --connections --apps radarr,sonarr,prowlarr --host media.example.net --output ./seerrng-connections --yes
+```
+
+The report supports SeerrNG integrations for Radarr, Sonarr, Lidarr,
+BookshelfNG, ChaptarrNG, Prowlarr, LazyLibrarian, Mylar3, Kapowarr, BackIssue,
+ROMarrNG, and QuestarrNG. qBittorrent has no SeerrNG service form, so it is not
+included. BookshelfNG and ChaptarrNG require two SeerrNG entries, one for Books
+and one for Audiobooks.
+
+`localhost` is relative to the machine or container where SeerrNG runs. Use it
+only when SeerrNG and the target app share a network namespace. If SeerrNG runs
+in Docker and the app runs directly on its host, use an address reachable from
+inside the SeerrNG container. On Linux Docker Engine this may require a
+host-gateway mapping or a routable host address. On Docker Desktop, verify
+`host.docker.internal` resolves from inside the SeerrNG container. For apps on
+another machine, use that machine’s LAN DNS name or IP. Ensure the app listens
+on an interface reachable by SeerrNG and that the firewall permits its port.
+
+Manual reports work across SeerrNG’s supported Windows x64/ARM64, macOS
+x64/ARM64, and Linux deployments, including Debian, RPM, AppImage, Flatpak,
+Snap, PPA, COPR, and AUR packages. Companion apps may support fewer operating
+systems or architectures; install them using their own supported method. The
+connection workflow itself does not depend on how either service was installed.
 
 Use `--detect --output ./my-media-stack` to report which containers Docker
 Compose currently sees in that generated stack. To discover supported apps
@@ -88,6 +128,12 @@ settings. Saved service addresses are left unchanged. API keys remain blank;
 enter each key in the corresponding app and use **Test** so SeerrNG validates
 the API and loads profiles, root folders, or provider capabilities. Imported
 suggestions stay in memory until you clear them or reload SeerrNG.
+
+The report starts with each app’s common web port. Confirm custom ports, SSL,
+and reverse-proxy paths in the target app. Enter API keys manually. **Test** is
+the live API probe: it verifies that SeerrNG can reach the selected service
+with the supplied credentials and loads its profiles, root folders, or
+capabilities before saving.
 
 After choosing a profile, enter app IDs to add or prefix an ID with `-` to
 remove it. For example, add `lidarr` to a Movies and TV profile or enter

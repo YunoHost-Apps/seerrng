@@ -5,8 +5,8 @@ import { useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Settings.SetupConnectionsImport', {
-  import: 'Import detected connections',
-  help: 'Choose the seerrng-connections.json file created by the setup assistant. Hostnames and ports will prefill matching service forms; API keys are never imported.',
+  import: 'Import connection report',
+  help: 'Choose a seerrng-connections.json file from Docker discovery or manual setup. Hostnames and ports will prefill matching service forms; API keys are never imported.',
   imported:
     'Loaded suggestions for {count, plural, one {# app} other {# apps}}. Matching add forms will use these hostnames and ports.',
   clear: 'Clear imported suggestions',

@@ -138,10 +138,7 @@ describe('Prowlarr settings on a short mobile screen', () => {
 
     cy.contains('section.app-card-sub', 'Connect your apps')
       .should('be.visible')
-      .and(
-        'contain',
-        'Generate a Docker Compose starter or discover apps on a Docker network.'
-      );
+      .and('contain', 'create a manual report for native and remote apps.');
     cy.contains('a', 'Open the setup guide')
       .should('be.visible')
       .should(
@@ -198,7 +195,7 @@ describe('Prowlarr settings on a short mobile screen', () => {
         },
       ],
     };
-    cy.get('input[aria-label="Import detected connections"]').selectFile(
+    cy.get('input[aria-label="Import connection report"]').selectFile(
       {
         contents: Cypress.Buffer.from(JSON.stringify(report)),
         fileName: 'seerrng-connections.json',

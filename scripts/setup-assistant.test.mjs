@@ -8,13 +8,56 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   apps,
+  buildManualConnections,
+  connectionAppIds,
   discoverNetworkApps,
   parseComposeStatus,
   profiles,
   renderCompose,
   renderDiscoveredConnections,
   renderGuide,
+  renderManualConnections,
 } from './setup-assistant.mjs';
+
+test('manual connection suggestions cover native installs without Docker', () => {
+  const connections = buildManualConnections(
+    'media.example.net',
+    ['radarr', 'sonarr', 'bookshelf', 'questarrng'],
+    { sonarr: 9999 }
+  );
+  assert.deepEqual(
+    connections.map(({ id, hostname, port }) => ({ id, hostname, port })),
+    [
+      { id: 'radarr', hostname: 'media.example.net', port: 7878 },
+      { id: 'sonarr', hostname: 'media.example.net', port: 9999 },
+      { id: 'bookshelf', hostname: 'media.example.net', port: 8787 },
+      { id: 'questarrng', hostname: 'media.example.net', port: 5000 },
+    ]
+  );
+  assert.ok(connectionAppIds.includes('radarr'));
+  assert.ok(!connectionAppIds.includes('qbittorrent'));
+  assert.throws(
+    () => buildManualConnections('http://media.example.net', ['radarr']),
+    /DNS name or IPv4 address/
+  );
+  assert.throws(
+    () => buildManualConnections('localhost', ['radarr'], { radarr: 65536 }),
+    /between 1 and 65535/
+  );
+  assert.throws(
+    () => buildManualConnections('localhost', ['qbittorrent']),
+    /cannot be imported/
+  );
+
+  const guide = renderManualConnections('media.example.net', connections);
+  assert.match(guide, /native Windows, macOS, or Linux installs/);
+  assert.match(
+    guide,
+    /Do not use `localhost` when SeerrNG runs in a container/
+  );
+  assert.match(guide, /separate Book and Audiobook service entries/);
+  assert.match(guide, /Software Acquisition/);
+});
 
 test('every starter profile contains SeerrNG and known app definitions', () => {
   for (const [name, profile] of Object.entries(profiles)) {
@@ -332,6 +375,77 @@ test('interactive setup writes the selected profile and refuses to overwrite it'
     );
     assert.doesNotMatch(appOnlyCompose, /\n  seerrng:/);
     assert.match(appOnlyCompose, /name: "existing-seerr-network"/);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test('non-Docker connection report works unattended and refuses to overwrite files', async () => {
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), 'seerrng-connections-assistant-')
+  );
+  const outputDirectory = path.join(temporaryDirectory, 'connections');
+  const scriptPath = fileURLToPath(
+    new URL('./setup-assistant.mjs', import.meta.url)
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        scriptPath,
+        '--connections',
+        '--apps',
+        'radarr,sonarr',
+        '--host',
+        'media.example.net',
+        '--output',
+        outputDirectory,
+        '--yes',
+      ],
+      { encoding: 'utf8' }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(
+      await readFile(
+        path.join(outputDirectory, 'seerrng-connections.json'),
+        'utf8'
+      )
+    );
+    assert.deepEqual(
+      report.connections.map(({ id, hostname, port }) => ({
+        id,
+        hostname,
+        port,
+      })),
+      [
+        { id: 'radarr', hostname: 'media.example.net', port: 7878 },
+        { id: 'sonarr', hostname: 'media.example.net', port: 8989 },
+      ]
+    );
+    const guide = await readFile(
+      path.join(outputDirectory, 'CONNECTIONS.md'),
+      'utf8'
+    );
+    assert.match(guide, /API keys are included/);
+    assert.match(guide, /Do not use `localhost`/);
+
+    const secondRun = spawnSync(
+      process.execPath,
+      [
+        scriptPath,
+        '--connections',
+        '--apps',
+        'radarr',
+        '--host',
+        'media.example.net',
+        '--output',
+        outputDirectory,
+        '--yes',
+      ],
+      { encoding: 'utf8' }
+    );
+    assert.equal(secondRun.status, 1);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

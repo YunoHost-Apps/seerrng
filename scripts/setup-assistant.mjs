@@ -161,6 +161,88 @@ export const apps = {
   },
 };
 
+export const connectionAppIds = Object.keys(apps).filter(
+  (id) => !['seerrng', 'qbittorrent'].includes(id)
+);
+
+const isSafeHostname = (value) =>
+  typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$/.test(value);
+
+export const buildManualConnections = (
+  hostname,
+  appIds,
+  portOverrides = {}
+) => {
+  if (!isSafeHostname(hostname)) {
+    throw new Error(
+      'Host must be a DNS name or IPv4 address without a URL scheme or path.'
+    );
+  }
+  if (!Array.isArray(appIds) || appIds.length === 0) {
+    throw new Error('Select at least one supported app to connect.');
+  }
+
+  const uniqueIds = [...new Set(appIds)];
+  for (const id of uniqueIds) {
+    if (!connectionAppIds.includes(id)) {
+      throw new Error(`App "${id}" cannot be imported as a connection.`);
+    }
+  }
+
+  return uniqueIds.map((id) => {
+    const rawPort = portOverrides[id] ?? apps[id].port;
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(
+        `Port for ${apps[id].title} must be between 1 and 65535.`
+      );
+    }
+    return {
+      id,
+      title: apps[id].title,
+      hostname,
+      port,
+      state: 'manual',
+    };
+  });
+};
+
+export const renderManualConnections = (hostname, connections) => {
+  const lines = [
+    '# SeerrNG connection suggestions',
+    '',
+    `These addresses were entered manually for ${hostname}. They work with native Windows, macOS, or Linux installs, package installs, and services hosted on another reachable machine.`,
+    '',
+    'Import `seerrng-connections.json` in SeerrNG under **Settings → Services**. Enter each app’s API key in SeerrNG and use **Test** to verify the API and load its options before saving. No API keys are included in this report.',
+    '',
+    'The port values start with each app’s common default. Change them if the app uses a custom port. Do not use `localhost` when SeerrNG runs in a container and the app runs on the host: `localhost` would point back into the SeerrNG container. Use a hostname or IP address reachable from SeerrNG instead.',
+    '',
+  ];
+  if (connections.length === 0) {
+    lines.push('No apps were selected.');
+  } else {
+    for (const connection of connections) {
+      lines.push(
+        `- **${connection.title}** — hostname \`${connection.hostname}\`, port \`${connection.port}\``
+      );
+      if (connection.id === 'bookshelf' || connection.id === 'chaptarrng') {
+        lines.push(
+          '  Add separate Book and Audiobook service entries using the same hostname, port, and API key.'
+        );
+      }
+      if (connection.id === 'questarrng' || connection.id === 'romarrng') {
+        lines.push(
+          '  Configure this provider under **Settings → Services → Software Acquisition**.'
+        );
+      }
+      if (connection.id === 'prowlarr') {
+        lines.push('  Configure this provider under **Settings → Prowlarr**.');
+      }
+    }
+  }
+  return `${lines.join('\n')}\n`;
+};
+
 export const profiles = {
   'movies-tv': {
     title: 'Movies and TV',
@@ -619,33 +701,87 @@ const discoverAndReport = async (networkName, outputDirectory) => {
     }
   }
 
-  if (outputDirectory) {
-    const resolvedDirectory = path.resolve(outputDirectory);
-    await mkdir(resolvedDirectory, { recursive: true });
-    const jsonPath = path.join(resolvedDirectory, 'seerrng-connections.json');
-    const guidePath = path.join(resolvedDirectory, 'CONNECTIONS.md');
-    await writeFile(
-      jsonPath,
-      `${JSON.stringify({ network: networkName, connections }, null, 2)}\n`,
-      { flag: 'wx', mode: 0o600 }
+  if (outputDirectory)
+    await writeConnectionReport(
+      outputDirectory,
+      { network: networkName, connections },
+      renderDiscoveredConnections(networkName, connections)
     );
-    try {
-      await writeFile(
-        guidePath,
-        renderDiscoveredConnections(networkName, connections),
-        {
-          flag: 'wx',
-          mode: 0o600,
-        }
-      );
-    } catch (error) {
-      await unlink(jsonPath).catch(() => {});
-      throw error;
-    }
-    stdout.write(
-      `Wrote private connection suggestions to ${resolvedDirectory}.\n`
+};
+
+const writeConnectionReport = async (outputDirectory, document, guide) => {
+  const resolvedDirectory = path.resolve(outputDirectory);
+  await mkdir(resolvedDirectory, { recursive: true });
+  const jsonPath = path.join(resolvedDirectory, 'seerrng-connections.json');
+  const guidePath = path.join(resolvedDirectory, 'CONNECTIONS.md');
+  await writeFile(jsonPath, `${JSON.stringify(document, null, 2)}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
+  try {
+    await writeFile(guidePath, guide, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    await unlink(jsonPath).catch(() => {});
+    throw error;
+  }
+  stdout.write(
+    `Wrote private connection suggestions to ${resolvedDirectory}.\n`
+  );
+};
+
+const createManualConnections = async (args, optionValue, rl) => {
+  const nonInteractive = args.includes('--yes');
+  let selectedIds = optionValue('--apps', '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!selectedIds.length) {
+    if (nonInteractive) throw new Error('--yes requires --apps.');
+    stdout.write(`Apps: ${connectionAppIds.join(', ')}\n`);
+    selectedIds = (await rl.question('App IDs to connect (comma-separated): '))
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  let hostname = optionValue('--host');
+  if (!hostname) {
+    if (nonInteractive) throw new Error('--yes requires --host.');
+    hostname = await rl.question(
+      'Hostname or IPv4 address reachable from SeerrNG (use localhost only when both services share a network namespace): '
     );
   }
+
+  const portOverrides = {};
+  if (!nonInteractive) {
+    for (const id of [...new Set(selectedIds)]) {
+      if (!connectionAppIds.includes(id)) {
+        throw new Error(`Unknown or unsupported connection app "${id}".`);
+      }
+      const port = await rl.question(
+        `${apps[id].title} port [${apps[id].port}]: `
+      );
+      if (port.trim()) portOverrides[id] = port.trim();
+    }
+  }
+  const connections = buildManualConnections(
+    hostname.trim(),
+    selectedIds,
+    portOverrides
+  );
+  const outputDirectory = optionValue('--output', './seerrng-connections');
+  stdout.write(
+    `\nConnections for ${hostname}:\n${connections.map((entry) => `  ${entry.title}: ${entry.hostname}:${entry.port}`).join('\n')}\nOutput: ${path.resolve(outputDirectory)}\n`
+  );
+  if (!nonInteractive) {
+    const confirm = await rl.question('Write the connection report? [Y/n] ');
+    if (/^(n|no)$/i.test(confirm.trim())) return;
+  }
+  await writeConnectionReport(
+    outputDirectory,
+    { source: 'manual', connections },
+    renderManualConnections(hostname, connections)
+  );
 };
 
 const detectComposeApps = async (outputDirectory) => {
@@ -679,7 +815,7 @@ const detectComposeApps = async (outputDirectory) => {
 
 const help = () => {
   stdout.write(
-    `SeerrNG setup assistant\n\nUsage: pnpm setup:assistant [options]\n\nOptions:\n  --profile <name>  choose a media profile (see --list-profiles)\n  --apps <changes>  add app IDs or remove with - (comma-separated)\n  --network <name>  join or discover apps on an explicitly named Docker network\n  --output <path>   output folder (default: ./seerrng-stack)\n  --yes             create files without interactive prompts\n  --start           start the stack after creating files\n  --detect          report containers in an existing Compose stack\n  --discover        identify supported apps attached to --network\n  --list-profiles   print available profiles\n  --help            show this help\n\nUse --discover --network <name> to write ready-to-use host and port suggestions. API keys stay in each app and are entered in SeerrNG.\nTo add apps to an existing SeerrNG, remove it with --apps -seerrng and set --network.\nWithout --profile, choose a profile from the interactive menu.\n`
+    `SeerrNG setup assistant\n\nUsage: pnpm setup:assistant [options]\n\nOptions:\n  --profile <name>  choose a media profile (see --list-profiles)\n  --apps <changes>  add app IDs or remove with - (comma-separated)\n  --network <name>  join or discover apps on an explicitly named Docker network\n  --host <host>     target host for a non-Docker connection report\n  --connections     create a connection report without requiring Docker\n  --output <path>   output folder (default: ./seerrng-stack)\n  --yes             create files without interactive prompts\n  --start           start the stack after creating files\n  --detect          report containers in an existing Compose stack\n  --discover        identify supported apps attached to --network\n  --list-profiles   print available profiles\n  --help            show this help\n\nUse --connections to create an importable report for apps installed on Windows, macOS, Linux, or another reachable host. It does not require Docker.\nUse --discover --network <name> for Docker discovery. API keys stay in each app and are entered in SeerrNG.\nWithout --profile, choose a Docker starter profile from the interactive menu.\n`
   );
 };
 
@@ -735,9 +871,14 @@ const run = async () => {
     return;
   }
 
-  let profileName = optionValue('--profile');
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
+    if (args.includes('--connections')) {
+      await createManualConnections(args, optionValue, rl);
+      return;
+    }
+
+    let profileName = optionValue('--profile');
     if (!profileName) {
       stdout.write('Choose a starter profile:\n');
       Object.entries(profiles).forEach(([key, profile], index) => {
