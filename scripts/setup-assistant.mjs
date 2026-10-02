@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { access, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import path from 'node:path';
 import { stderr, stdin, stdout } from 'node:process';
 import readline from 'node:readline/promises';
@@ -240,6 +241,108 @@ export const renderManualConnections = (hostname, connections) => {
       }
     }
   }
+  return `${lines.join('\n')}\n`;
+};
+
+const probeTcpPort = (hostname, port, timeoutMs = 900) =>
+  new Promise((resolve) => {
+    const socket = createConnection({ host: hostname, port });
+    let settled = false;
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const finish = (reachable) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+
+export const probeKnownAppPorts = async (
+  hostname,
+  requestedAppIds = connectionAppIds,
+  connect = probeTcpPort
+) => {
+  if (!isSafeHostname(hostname)) {
+    throw new Error(
+      'Host must be a DNS name or IPv4 address without a URL scheme or path.'
+    );
+  }
+  const selectedIds = [...new Set(requestedAppIds)];
+  if (selectedIds.length === 0) {
+    throw new Error('Select at least one supported app to probe.');
+  }
+  for (const id of selectedIds) {
+    if (!connectionAppIds.includes(id)) {
+      throw new Error(`App "${id}" cannot be probed as a SeerrNG connection.`);
+    }
+  }
+
+  const candidatesByPort = new Map();
+  for (const id of selectedIds) {
+    const port = Number(apps[id].port);
+    candidatesByPort.set(port, [...(candidatesByPort.get(port) ?? []), id]);
+  }
+  const ports = [...candidatesByPort.keys()];
+  const results = Array(ports.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < ports.length) {
+      const index = nextIndex++;
+      const port = ports[index];
+      let reachable = false;
+      try {
+        reachable = await connect(hostname, port, 900);
+      } catch {
+        reachable = false;
+      }
+      results[index] = {
+        port,
+        candidates: candidatesByPort.get(port),
+        reachable: reachable === true,
+      };
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(4, ports.length) }, () => worker())
+  );
+
+  const openPorts = results.filter((result) => result.reachable);
+  const connections = openPorts.flatMap((result) =>
+    result.candidates.length === 1
+      ? buildManualConnections(hostname, result.candidates).map((connection) =>
+          Object.assign(connection, { state: 'reachable' })
+        )
+      : []
+  );
+  return { openPorts, connections };
+};
+
+export const renderProbedConnections = (hostname, openPorts, connections) => {
+  const lines = [
+    '# Probed SeerrNG service ports',
+    '',
+    `The setup assistant attempted TCP connections to common app ports on the explicitly selected host \`${hostname}\`. A reachable port does not prove which app is listening; confirm each suggestion with SeerrNG’s **Test** action. No HTTP requests, API keys, or service settings were read.`,
+    '',
+  ];
+  if (openPorts.length === 0) {
+    lines.push('No common service ports accepted a TCP connection.');
+  } else {
+    for (const result of openPorts) {
+      const labels = result.candidates.map((id) => apps[id].title).join(' / ');
+      lines.push(
+        `- Port \`${result.port}\` is reachable; common default candidate${result.candidates.length > 1 ? 's' : ''}: ${labels}${result.candidates.length === 1 ? ' (added as a suggestion)' : ' (ambiguous; enter the app and port manually)'}.`
+      );
+    }
+  }
+  lines.push(
+    '',
+    'Only ports with one selected app using that default are included in the import file. Open ports can belong to unrelated software, and custom ports are not scanned. Use manual connection mode for custom ports or ambiguous matches.',
+    ''
+  );
   return `${lines.join('\n')}\n`;
 };
 
@@ -784,6 +887,36 @@ const createManualConnections = async (args, optionValue, rl) => {
   );
 };
 
+const probeHostAndReport = async (hostname, appIds, outputDirectory) => {
+  const { openPorts, connections } = await probeKnownAppPorts(hostname, appIds);
+  if (openPorts.length === 0) {
+    stdout.write(
+      `No common SeerrNG app ports accepted a TCP connection on ${hostname}. Use --connections to enter custom ports.\n`
+    );
+    return;
+  }
+  stdout.write(`Reachable common app ports on ${hostname}:\n`);
+  for (const result of openPorts) {
+    const labels = result.candidates.map((id) => apps[id].title).join(' / ');
+    stdout.write(
+      `  ${result.port}: ${labels}${result.candidates.length > 1 ? ' (ambiguous)' : ''}\n`
+    );
+  }
+  if (connections.length === 0) {
+    stdout.write(
+      'No unambiguous suggestions to import. Use --connections to select the app and enter its port.\n'
+    );
+    return;
+  }
+  if (outputDirectory) {
+    await writeConnectionReport(
+      outputDirectory,
+      { source: 'tcp-probe', connections },
+      renderProbedConnections(hostname, openPorts, connections)
+    );
+  }
+};
+
 const detectComposeApps = async (outputDirectory) => {
   await access(path.join(outputDirectory, 'compose.yaml'));
   const result = spawnSync('docker', ['compose', 'ps', '--format', 'json'], {
@@ -815,7 +948,7 @@ const detectComposeApps = async (outputDirectory) => {
 
 const help = () => {
   stdout.write(
-    `SeerrNG setup assistant\n\nUsage: pnpm setup:assistant [options]\n\nOptions:\n  --profile <name>  choose a media profile (see --list-profiles)\n  --apps <changes>  add app IDs or remove with - (comma-separated)\n  --network <name>  join or discover apps on an explicitly named Docker network\n  --host <host>     target host for a non-Docker connection report\n  --connections     create a connection report without requiring Docker\n  --output <path>   output folder (default: ./seerrng-stack)\n  --yes             create files without interactive prompts\n  --start           start the stack after creating files\n  --detect          report containers in an existing Compose stack\n  --discover        identify supported apps attached to --network\n  --list-profiles   print available profiles\n  --help            show this help\n\nUse --connections to create an importable report for apps installed on Windows, macOS, Linux, or another reachable host. It does not require Docker.\nUse --discover --network <name> for Docker discovery. API keys stay in each app and are entered in SeerrNG.\nWithout --profile, choose a Docker starter profile from the interactive menu.\n`
+    `SeerrNG setup assistant\n\nUsage: pnpm setup:assistant [options]\n\nOptions:\n  --profile <name>  choose a media profile (see --list-profiles)\n  --apps <changes>  add app IDs or remove with - (comma-separated)\n  --network <name>  join or discover apps on an explicitly named Docker network\n  --host <host>     target host for a manual connection report\n  --connections     create a manual report without requiring Docker\n  --probe-host <host> probe common app ports on one explicitly named host\n  --output <path>   output folder (default: ./seerrng-stack)\n  --yes             create files without interactive prompts\n  --start           start the stack after creating files\n  --detect          report containers in an existing Compose stack\n  --discover        identify supported apps attached to --network\n  --list-profiles   print available profiles\n  --help            show this help\n\nUse --connections to create an importable report for apps installed on Windows, macOS, Linux, or another reachable host. It does not require Docker.\nUse --probe-host <host> to check only the common default ports on one explicitly named host. TCP reachability is a suggestion, not app identification; API keys are never requested.\nUse --discover --network <name> for Docker discovery. API keys stay in each app and are entered in SeerrNG.\nWithout --profile, choose a Docker starter profile from the interactive menu.\n`
   );
 };
 
@@ -861,6 +994,28 @@ const run = async () => {
       await discoverAndReport(
         networkName,
         args.includes('--output') ? optionValue('--output') : undefined
+      );
+    } catch (error) {
+      stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`
+      );
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (args.includes('--probe-host')) {
+    try {
+      const hostname = optionValue('--probe-host');
+      if (!hostname) throw new Error('--probe-host requires a hostname.');
+      const requestedApps = optionValue('--apps', '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      await probeHostAndReport(
+        hostname,
+        requestedApps.length ? requestedApps : connectionAppIds,
+        optionValue('--output', './seerrng-connections')
       );
     } catch (error) {
       stderr.write(

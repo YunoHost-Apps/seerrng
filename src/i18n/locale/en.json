@@ -3255,7 +3255,7 @@
   "components.Settings.services": "Services",
   "components.Settings.settingUpPlexDescription": "To set up Plex, you can either enter the details manually or select a server retrieved from <RegisterPlexTVLink>plex.tv</RegisterPlexTVLink>. Press the button to the right of the dropdown to fetch the list of available servers.",
   "components.Settings.settings": "Settings",
-  "components.Settings.setupAssistantDescription": "Generate a Docker Compose starter, discover apps on a Docker network, or create a manual report for native and remote apps. Import connection suggestions to prefill hostnames and ports, then test each API connection before saving.",
+  "components.Settings.setupAssistantDescription": "Generate a Docker Compose starter, discover apps on a Docker network, probe common ports on a selected host, or create a manual report. Import suggestions to prefill hostnames and ports, then test each API connection before saving.",
   "components.Settings.setupAssistantGuide": "Open the setup guide",
   "components.Settings.setupAssistantTitle": "Connect your apps",
   "components.Settings.sonarrsettings": "Sonarr Settings",

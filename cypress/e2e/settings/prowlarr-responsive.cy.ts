@@ -138,7 +138,7 @@ describe('Prowlarr settings on a short mobile screen', () => {
 
     cy.contains('section.app-card-sub', 'Connect your apps')
       .should('be.visible')
-      .and('contain', 'create a manual report for native and remote apps.');
+      .and('contain', 'probe common ports on a selected host');
     cy.contains('a', 'Open the setup guide')
       .should('be.visible')
       .should(

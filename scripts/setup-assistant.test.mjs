@@ -12,11 +12,13 @@ import {
   connectionAppIds,
   discoverNetworkApps,
   parseComposeStatus,
+  probeKnownAppPorts,
   profiles,
   renderCompose,
   renderDiscoveredConnections,
   renderGuide,
   renderManualConnections,
+  renderProbedConnections,
 } from './setup-assistant.mjs';
 
 test('manual connection suggestions cover native installs without Docker', () => {
@@ -57,6 +59,71 @@ test('manual connection suggestions cover native installs without Docker', () =>
   );
   assert.match(guide, /separate Book and Audiobook service entries/);
   assert.match(guide, /Software Acquisition/);
+});
+
+test('host probes stay on one host, use bounded known ports, and omit ambiguous app matches', async () => {
+  const calls = [];
+  let active = 0;
+  let maxActive = 0;
+  const result = await probeKnownAppPorts(
+    'media.example.net',
+    ['radarr', 'sonarr', 'bookshelf', 'backissue'],
+    async (hostname, port, timeout) => {
+      calls.push({ hostname, port, timeout });
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return port === 7878 || port === 8787;
+    }
+  );
+
+  assert.equal(calls.length, 3);
+  assert.ok(maxActive <= 4);
+  assert.ok(calls.every((call) => call.hostname === 'media.example.net'));
+  assert.ok(calls.every((call) => call.timeout === 900));
+  assert.deepEqual(result.openPorts, [
+    { port: 7878, candidates: ['radarr'], reachable: true },
+    {
+      port: 8787,
+      candidates: ['bookshelf', 'backissue'],
+      reachable: true,
+    },
+  ]);
+  assert.deepEqual(
+    result.connections.map(({ id }) => id),
+    ['radarr']
+  );
+
+  const guide = renderProbedConnections(
+    'media.example.net',
+    result.openPorts,
+    result.connections
+  );
+  assert.match(guide, /does not prove which app is listening/);
+  assert.match(guide, /8787.*ambiguous/);
+  assert.match(
+    guide,
+    /No HTTP requests, API keys, or service settings were read/
+  );
+});
+
+test('host probes reject unsafe hosts and support an explicitly selected ambiguous app', async () => {
+  let calls = 0;
+  const connect = async () => {
+    calls += 1;
+    return true;
+  };
+  await assert.rejects(
+    probeKnownAppPorts('http://localhost', ['radarr'], connect),
+    /DNS name or IPv4 address/
+  );
+  assert.equal(calls, 0);
+
+  const result = await probeKnownAppPorts('localhost', ['backissue'], connect);
+  assert.equal(result.openPorts[0].port, 8787);
+  assert.equal(result.openPorts[0].candidates.length, 1);
+  assert.equal(result.connections[0].id, 'backissue');
 });
 
 test('every starter profile contains SeerrNG and known app definitions', () => {

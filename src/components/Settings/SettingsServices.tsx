@@ -72,7 +72,7 @@ const messages = defineMessages('components.Settings', {
   services: 'Services',
   setupAssistantTitle: 'Connect your apps',
   setupAssistantDescription:
-    'Generate a Docker Compose starter, discover apps on a Docker network, or create a manual report for native and remote apps. Import connection suggestions to prefill hostnames and ports, then test each API connection before saving.',
+    'Generate a Docker Compose starter, discover apps on a Docker network, probe common ports on a selected host, or create a manual report. Import suggestions to prefill hostnames and ports, then test each API connection before saving.',
   setupAssistantGuide: 'Open the setup guide',
   radarrsettings: 'Radarr Settings',
   sonarrsettings: 'Sonarr Settings',

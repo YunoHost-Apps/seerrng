@@ -104,6 +104,21 @@ Snap, PPA, COPR, and AUR packages. Companion apps may support fewer operating
 systems or architectures; install them using their own supported method. The
 connection workflow itself does not depend on how either service was installed.
 
+For a quick reachability check, probe common app ports on one host:
+
+```text
+node scripts/setup-assistant.mjs --probe-host media.example.net --output ./seerrng-connections
+```
+
+The probe makes TCP connection attempts only to the selected host and the
+catalog’s distinct default ports, with at most four attempts at a time. It does
+not send HTTP requests, inspect processes, scan a subnet, or use credentials.
+An open port is not proof of app identity; unique default-port matches become
+suggestions for SeerrNG’s **Test** action. Ports shared by multiple apps are
+reported as ambiguous and omitted from the import file. The probe cannot find
+custom ports; use manual mode to enter them. You can restrict the probe to
+selected app IDs with `--apps radarr,sonarr`.
+
 Use `--detect --output ./my-media-stack` to report which containers Docker
 Compose currently sees in that generated stack. To discover supported apps
 already attached to a particular Docker network, name that network explicitly:
